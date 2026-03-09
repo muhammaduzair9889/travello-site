@@ -13,8 +13,6 @@ Features:
 - Data quality checks and logging
 """
 
-import pandas as pd
-import numpy as np
 import json
 import logging
 import hashlib
@@ -23,6 +21,13 @@ from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 import unicodedata
 import re
+
+try:
+    import pandas as pd
+    import numpy as np
+except ImportError:
+    pd = None
+    np = None
 
 # Configure logging
 logging.basicConfig(

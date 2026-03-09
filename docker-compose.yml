@@ -7,7 +7,7 @@
 #  Logs           :  docker compose logs -f backend
 #  Stop           :  docker compose down
 #  Full reset     :  docker compose down -v   (⚠ deletes volumes)
-#  Migrations     :  docker compose exec backend python manage.py migrate
+#  Migrations     :  Automatic on startup (entrypoint.sh)
 #  Superuser      :  docker compose exec backend python manage.py createsuperuser
 #  Shell          :  docker compose exec backend bash
 #
@@ -80,7 +80,8 @@ services:
     container_name: travello-backend
     restart: unless-stopped
     env_file:
-      - ./backend/.env                   # Your API keys (Gemini, Stripe, etc.)
+      - path: ./backend/.env             # Your API keys (Gemini, Stripe, etc.)
+        required: false                   # Won't fail if file doesn't exist yet
     environment:
       # Docker-internal overrides (take precedence over .env)
       DATABASE_URL:          postgres://travello:${DB_PASSWORD:-travello_secret}@db:5432/travello_db

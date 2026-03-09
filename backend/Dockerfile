@@ -97,8 +97,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 # ── Copy application code ───────────────────────────────
 COPY . .
 
-# Collect static files (WhiteNoise serves them in production)
-RUN python manage.py collectstatic --noinput 2>/dev/null || true
+# Make entrypoint executable
+RUN chmod +x /app/entrypoint.sh
 
 # Ensure writable dirs exist (volumes mount over these in docker-compose)
 RUN mkdir -p /app/data /app/media /app/staticfiles && \
@@ -109,18 +109,18 @@ USER travello
 
 EXPOSE ${PORT}
 
-# Tini as entrypoint — reaps zombie processes & forwards signals
-ENTRYPOINT ["tini", "--"]
+# Tini as PID 1, entrypoint handles migrations + collectstatic
+ENTRYPOINT ["tini", "--", "/app/entrypoint.sh"]
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health/')" || exit 1
 
 # Gunicorn with production-grade settings
 CMD ["gunicorn", "travello_backend.travello_backend.wsgi:application", \
      "--bind", "0.0.0.0:8000", \
      "--workers", "2", \
-     "--threads", "2", \
      "--worker-class", "gthread", \
+     "--threads", "2", \
      "--timeout", "120",  \
      "--graceful-timeout", "30", \
      "--keep-alive", "5", \

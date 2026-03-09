@@ -12,16 +12,27 @@ Features:
 - Normalized L2 embeddings for cosine similarity
 """
 
-import pandas as pd
-import numpy as np
-import torch
 import json
 import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
-from sentence_transformers import SentenceTransformer
-from tqdm import tqdm
+
+try:
+    import pandas as pd
+    import numpy as np
+    import torch
+    from sentence_transformers import SentenceTransformer
+    from tqdm import tqdm
+    ML_DEPS_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"ML embedding dependencies not available: {e}")
+    ML_DEPS_AVAILABLE = False
+    pd = None
+    np = None
+    torch = None
+    SentenceTransformer = None
+    tqdm = None
 
 # Configure logging
 logging.basicConfig(

@@ -7,19 +7,28 @@ Dataset Sources:
 - ml_datasets/Lahore_Tourism.csv (78 tourism spots)
 """
 
-import pandas as pd
-import numpy as np
-import torch
 import json
 import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 from datetime import datetime
-from transformers import AutoTokenizer, AutoModel
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.preprocessing import StandardScaler
 import pickle
+
+try:
+    import pandas as pd
+    import numpy as np
+    import torch
+    from transformers import AutoTokenizer, AutoModel
+    from sklearn.metrics.pairwise import cosine_similarity
+    from sklearn.preprocessing import StandardScaler
+    ML_DEPS_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"ML training dependencies not available: {e}")
+    ML_DEPS_AVAILABLE = False
+    pd = None
+    np = None
+    torch = None
 
 logging.basicConfig(
     level=logging.INFO,

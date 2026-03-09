@@ -3,15 +3,15 @@ Recommendation Engine using Scikit-learn Cosine Similarity
 Filters by availability, city, price range (PKR), and re-ranks results
 """
 
-import pandas as pd
-import numpy as np
 import json
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
-# Try to import ML dependencies, but make them optional
+# All heavy ML/data dependencies are optional
 try:
+    import pandas as pd
+    import numpy as np
     import torch
     from transformers import AutoTokenizer, AutoModel
     from sklearn.metrics.pairwise import cosine_similarity
@@ -20,6 +20,8 @@ try:
 except Exception as e:
     logging.warning(f"ML dependencies not available: {e}")
     ML_DEPENDENCIES_AVAILABLE = False
+    pd = None
+    np = None
     torch = None
     AutoTokenizer = None
     AutoModel = None

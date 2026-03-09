@@ -11,15 +11,24 @@ Features:
 - Index persistence and loading
 """
 
-import numpy as np
-import pandas as pd
-import faiss
 import json
 import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import pickle
+
+try:
+    import numpy as np
+    import pandas as pd
+    import faiss
+    FAISS_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"FAISS/ML dependencies not available: {e}")
+    FAISS_AVAILABLE = False
+    np = None
+    pd = None
+    faiss = None
 
 # Configure logging
 logging.basicConfig(
