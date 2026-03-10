@@ -14,7 +14,7 @@ function TypingDots() {
 }
 
 /* ── Hotel card for chat ───────────────────────────────────────────────── */
-function ChatHotelCard({ hotel, index, onBook }) {
+function ChatHotelCard({ hotel, index, onBook, onViewDetails }) {
   const stars = hotel.stars ? '★'.repeat(hotel.stars) + '☆'.repeat(5 - hotel.stars) : null;
   const price = hotel.price_per_night
     ? `${hotel.currency || 'PKR'} ${Number(hotel.price_per_night).toLocaleString()}`
@@ -86,22 +86,18 @@ function ChatHotelCard({ hotel, index, onBook }) {
         <div className="mt-2 flex gap-1.5">
           {!hotel.is_sold_out && (
             <button
-              onClick={() => onBook(index)}
+              onClick={() => onViewDetails(hotel)}
               className="flex-1 text-[10px] font-medium py-1 px-2 rounded bg-primary-600 hover:bg-primary-700 text-white transition-colors"
             >
               Book
             </button>
           )}
-          {hotel.url && (
-            <a
-              href={hotel.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex-1 text-[10px] font-medium py-1 px-2 rounded border border-gray-300 dark:border-gray-500 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 text-center transition-colors"
-            >
-              Details
-            </a>
-          )}
+          <button
+            onClick={() => onViewDetails(hotel)}
+            className="flex-1 text-[10px] font-medium py-1 px-2 rounded border border-gray-300 dark:border-gray-500 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 text-center transition-colors"
+          >
+            Details
+          </button>
         </div>
       </div>
     </div>
@@ -426,6 +422,17 @@ export default function ChatWidget() {
                         hotel={hotel}
                         index={i + 1}
                         onBook={(idx) => sendMessage(`Book option ${idx}`)}
+                        onViewDetails={(h) => {
+                          navigate('/hotel-details', {
+                            state: {
+                              hotel: {
+                                ...h,
+                                id: h.id || `chat_${i}`,
+                              },
+                              searchParams: m.searchParams || {},
+                            },
+                          });
+                        }}
                       />
                     ))}
                   </div>

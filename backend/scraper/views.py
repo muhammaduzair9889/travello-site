@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 SCRAPER_MAX_RESULTS = getattr(django_settings, 'SCRAPER_MAX_RESULTS', 300)
 SCRAPER_CACHE_TTL = getattr(django_settings, 'SCRAPER_CACHE_TTL_MINS', 15) * 60  # seconds
 SCRAPER_CONCURRENCY = getattr(django_settings, 'SCRAPER_CONCURRENCY_LIMIT', 4)
-SCRAPER_MAX_SECONDS = getattr(django_settings, 'SCRAPER_MAX_SECONDS', 50)
-SCRAPER_HARD_TIMEOUT = getattr(django_settings, 'SCRAPER_HARD_TIMEOUT', 70)
+SCRAPER_MAX_SECONDS = getattr(django_settings, 'SCRAPER_MAX_SECONDS', 65)
+SCRAPER_HARD_TIMEOUT = getattr(django_settings, 'SCRAPER_HARD_TIMEOUT', 90)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -383,6 +383,17 @@ def scrape_hotels(request):
         # ── Enqueue background job (unless at concurrency limit) ────────
         job_id = None
         at_capacity = ScrapeJob.active_count() >= SCRAPER_CONCURRENCY
+
+        # Clean up stale RUNNING/QUEUED jobs older than 3 minutes
+        from datetime import timedelta
+        stale_cutoff = timezone.now() - timedelta(minutes=3)
+        stale_count = ScrapeJob.objects.filter(
+            status__in=[ScrapeJob.Status.QUEUED, ScrapeJob.Status.RUNNING],
+            updated_at__lt=stale_cutoff,
+        ).update(status=ScrapeJob.Status.FAILED, error_message='Auto-cleaned stale job')
+        if stale_count:
+            logger.info(f"Cleaned up {stale_count} stale scrape job(s)")
+            at_capacity = ScrapeJob.active_count() >= SCRAPER_CONCURRENCY  # recheck
 
         # First, check for a RUNNING/QUEUED job with the same search params
         existing_active = ScrapeJob.objects.filter(

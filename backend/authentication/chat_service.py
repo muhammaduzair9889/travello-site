@@ -328,7 +328,7 @@ def _run_realtime_scrape(city, checkin, checkout, adults):
             'rooms': 1,
             'children': 0,
             'order': 'popularity',
-            'max_seconds': 40,
+            'max_seconds': 50,
             'max_results': 30,
         }
         city_lower = city.lower()
@@ -372,27 +372,44 @@ def _format_scraped_hotels_for_context(hotels: list, city: str) -> str:
 
 
 def _build_hotels_for_response(hotels: list, city: str) -> list:
-    """Build a structured list of hotel dicts for the frontend to render cards."""
+    """Build a structured list of hotel dicts for the frontend to render cards
+    and navigate to the in-app hotel details page."""
     result = []
-    for h in hotels[:8]:
+    for i, h in enumerate(hotels[:8]):
         name = h.get('hotel_name') or h.get('name', 'Hotel')
+        ppn = h.get('price_per_night') or h.get('double_bed_price_per_day')
         result.append({
+            'id': h.get('id') or f'chat_{i}',
             'name': name,
             'city': city or '',
             'url': h.get('url') or h.get('booking_url') or '',
-            'image_url': h.get('image_url') or '',
+            'image_url': h.get('image_url') or h.get('image') or '',
             'rating': h.get('review_score') or h.get('review_rating') or h.get('rating'),
+            'review_count': h.get('review_count') or h.get('review_count_num'),
+            'rating_label': h.get('rating_label'),
             'stars': h.get('stars'),
-            'price_per_night': h.get('price_per_night') or h.get('total_stay_price'),
+            'price_per_night': ppn,
+            'double_bed_price_per_day': ppn,
+            'total_stay_price': h.get('total_stay_price'),
             'currency': h.get('currency', 'PKR'),
+            'nights': h.get('nights', 1),
             'room_type': h.get('room_type', 'Standard Room'),
+            'rooms': h.get('rooms') or [],
+            'is_scraped': True,
+            'is_real_time': True,
+            'source': 'booking.com',
             'availability_status': h.get('availability_status', ''),
             'rooms_left': h.get('rooms_left'),
             'is_sold_out': h.get('is_sold_out', False),
             'is_limited': h.get('is_limited', False),
             'distance_from_center': h.get('distance_from_center') or h.get('distance', ''),
             'location': h.get('location') or h.get('location_area') or '',
-            'amenities': (h.get('amenities') or [])[:4],
+            'address': h.get('address') or h.get('location') or '',
+            'amenities': h.get('amenities') or [],
+            'meal_plan': h.get('meal_plan'),
+            'cancellation_policy': h.get('cancellation_policy'),
+            'has_deal': h.get('has_deal', False),
+            'deal_label': h.get('deal_label'),
         })
     return result
 

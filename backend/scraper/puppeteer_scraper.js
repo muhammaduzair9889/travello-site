@@ -26,8 +26,8 @@ const PAGE_SIZE = 25;
 const MAX_CONSECUTIVE_EMPTY = 2;      // Stop after 2 consecutive 0-new-hotel searches
 const MAX_RETRY_PER_PAGE = 1;
 const PRICE_WAIT_MS = 400;            // Quick price XHR wait (most load fast)
-const NAV_TIMEOUT = 12000;            // 12s navigation timeout
-const DEFAULT_MAX_SECONDS = 45;       // Total budget (aggressive)
+const NAV_TIMEOUT = 15000;            // 15s navigation timeout
+const DEFAULT_MAX_SECONDS = 60;       // Total budget
 const SORT_ORDERS = ['price', 'popularity', 'distance', 'review_score'];
 
 // ── Search Combinations: sort × filter (ordered by expected yield) ──

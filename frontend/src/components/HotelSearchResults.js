@@ -1082,7 +1082,7 @@ const HotelSearchResults = () => {
       if (data.success && data.job_id && (!data.hotels || data.hotels.length === 0)) {
         console.log(`No cache. Polling job ${data.job_id}...`);
         const POLL_INTERVAL = 2000;
-        const MAX_POLLS = 35; // ~70s of polling
+        const MAX_POLLS = 45; // ~90s of polling — plenty for 60s scrape
         let pollHotels = [];
         let pollMeta = {};
         let jobFailed = false;
