@@ -1,6 +1,6 @@
 import requests
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -834,6 +834,7 @@ def admin_login(request):
 
 
 @api_view(['POST'])
+@authentication_classes([])   # Skip auto-JWT validation so expired tokens don't cause 401
 @permission_classes([AllowAny])
 def chat(request):
     """Handle chat messages with AI — no authentication required."""
@@ -846,8 +847,16 @@ def chat(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    # Pass session_id for conversation history and user for booking
-    user = request.user if request.user.is_authenticated else None
+    # Manually attempt JWT auth so user is available for booking flow
+    user = None
+    try:
+        from rest_framework_simplejwt.authentication import JWTAuthentication
+        result = JWTAuthentication().authenticate(request)
+        if result:
+            user = result[0]
+    except Exception:
+        pass
+
     response = get_ai_response(message, session_id=session_id, user=user)
 
     if response.get('status') == 'success':

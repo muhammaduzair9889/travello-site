@@ -1,6 +1,6 @@
 """
-Travello AI Chat Service — Enhanced with travel knowledge, scraper integration,
-conversation memory, and booking flow.
+Travello AI Chat Service — Tool-based architecture with internet search,
+real-time hotel scraping, conversation memory, and booking flow.
 """
 import json
 import logging
@@ -108,11 +108,24 @@ TEXT_PROCESSING_TYPES = {
 }
 
 _HOTEL_SEARCH_KEYWORDS = [
-    'find hotel', 'search hotel', 'show hotel', 'hotel in', 'hotels in',
-    'book a hotel', 'book hotel', 'need a hotel', 'looking for hotel',
-    'recommend hotel', 'best hotel', 'cheap hotel', 'budget hotel',
+    'find hotel', 'find a hotel', 'find me a hotel', 'find me hotel',
+    'search hotel', 'search a hotel', 'search for hotel', 'search for a hotel',
+    'show hotel', 'show me hotel', 'show me a hotel',
+    'hotel in', 'hotels in',
+    'book a hotel', 'book hotel', 'book a room', 'book room',
+    'need a hotel', 'need hotel', 'need a room', 'need room',
+    'looking for hotel', 'looking for a hotel', 'looking for room',
+    'recommend hotel', 'recommend a hotel', 'recommend me a hotel',
+    'best hotel', 'cheap hotel', 'budget hotel',
     'luxury hotel', 'stay in', 'accommodation', 'where to stay',
-    'hotel recommendation', 'suggest hotel', 'hotel near',
+    'hotel recommendation', 'suggest hotel', 'suggest a hotel', 'suggest hotels',
+    'hotel near', 'hotels near',
+    'hotels under', 'hotels below', 'hotel under', 'hotels for',
+    'room in', 'rooms in', 'family room', 'suite in', 'deluxe room',
+    'per night', 'price per night',
+    'want a hotel', 'want hotel', 'want to stay',
+    'get a hotel', 'get hotel', 'get me a hotel',
+    'i need accommodation', 'place to stay',
 ]
 
 _BOOKING_KEYWORDS = [
@@ -145,6 +158,13 @@ def _classify_request(message: str, conv_context: dict | None = None):
     if conv_context.get('booking_flow'):
         return 'booking_flow', None
 
+    # Active hotel search gathering — user is answering follow-up questions
+    if conv_context.get('hotel_search_gathering'):
+        # If user says cancel/stop/never mind, break out
+        if any(kw in msg_lower for kw in ['cancel', 'stop', 'never mind', 'forget it']):
+            return 'chat', None
+        return 'hotel_search', None
+
     # "book option 1" / "book #2"
     for kw in _BOOKING_KEYWORDS:
         if kw in msg_lower:
@@ -173,6 +193,27 @@ def _classify_request(message: str, conv_context: dict | None = None):
     return 'chat', None
 
 
+# ── Internet search decision helper ─────────────────────────────────────────
+
+_TRAVEL_QUESTION_PATTERNS = re.compile(
+    r'\b(travel tips?|tourist|tourism|attractions?|sightseeing|places to visit|'
+    r'things to do|best time to|weather in|visa|currency|transport|'
+    r'safety|food|cuisine|culture|festival|airport|flight|train|bus|'
+    r'what to pack|itinerary|guide|how to get to|cost of living|'
+    r'tips for|best restaurants|nightlife|shopping|markets|'
+    r'historical|monuments?|museums?|parks?|beaches?|mountains?|'
+    r'trekking|hiking|adventure|backpack)\b',
+    re.IGNORECASE,
+)
+
+
+def _should_use_internet_search(message: str) -> bool:
+    """Determine if a general chat message should trigger internet search."""
+    if len(message.split()) < 3:
+        return False  # Too short — likely a greeting or simple reply
+    return bool(_TRAVEL_QUESTION_PATTERNS.search(message))
+
+
 # ── Travel knowledge helpers ────────────────────────────────────────────────
 
 def _extract_city_from_message(message: str):
@@ -188,7 +229,17 @@ def _extract_city_from_message(message: str):
         'swat': 'Swat Valley', 'naran': 'Naran Kaghan',
     }
     for alias, city in aliases.items():
-        if alias in msg_lower and city in knowledge.get('destinations', {}):
+        if alias in msg_lower:
+            return city
+    # Fallback: common Pakistan cities even if not in knowledge file
+    _COMMON_CITIES = [
+        'Lahore', 'Islamabad', 'Karachi', 'Rawalpindi', 'Peshawar',
+        'Faisalabad', 'Multan', 'Quetta', 'Sialkot', 'Hyderabad',
+        'Murree', 'Nathia Gali', 'Bhurban', 'Abbottabad', 'Chitral',
+        'Gilgit', 'Skardu', 'Muzaffarabad', 'Bahawalpur', 'Gwadar',
+    ]
+    for city in _COMMON_CITIES:
+        if city.lower() in msg_lower:
             return city
     return None
 
@@ -265,6 +316,64 @@ def _extract_adults_from_message(message: str) -> int:
     """Extract guest/adult count from user message."""
     m = re.search(r'(\d+)\s*(?:guest|adult|person|people)', message.lower())
     return int(m.group(1)) if m else 2
+
+
+def _extract_max_price(message: str):
+    """Extract a max price from phrases like 'under 12999', 'below 5000', 'budget 3000' etc."""
+    m = re.search(
+        r'(?:under|below|less than|max|budget|cheaper than|up\s*to|within)\s*(?:pkr\s*)?(\d[\d,]*)',
+        message.lower(),
+    )
+    if m:
+        return int(m.group(1).replace(',', ''))
+    # Also match "12999 per night"
+    m2 = re.search(r'(\d[\d,]*)\s*(?:per night|/night|pkr)', message.lower())
+    if m2:
+        return int(m2.group(1).replace(',', ''))
+    return None
+
+
+def _extract_room_type(message: str):
+    """Extract room type preference from user message."""
+    msg = message.lower()
+    for rt in ['family', 'suite', 'deluxe', 'single', 'double', 'triple', 'quad',
+               'dormitory', 'entire', 'quint']:
+        if rt in msg:
+            return rt
+    return None
+
+
+def _apply_chat_filters(hotels: list, max_price=None, room_type=None) -> list:
+    """Filter hotels based on price and room type extracted from user message."""
+    if not max_price and not room_type:
+        return hotels
+
+    filtered = []
+    for h in hotels:
+        # Price filter
+        if max_price:
+            ppn = h.get('price_per_night') or h.get('double_bed_price_per_day')
+            if ppn:
+                try:
+                    if float(str(ppn).replace(',', '')) > max_price:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+        # Room type filter
+        if room_type:
+            hotel_room = (h.get('room_type') or '').lower()
+            rooms_list = h.get('rooms') or []
+            room_match = room_type in hotel_room
+            if not room_match and rooms_list:
+                room_match = any(room_type in (r.get('room_type') or '').lower() for r in rooms_list)
+            if not room_match:
+                continue
+
+        filtered.append(h)
+
+    # If filtering removed everything, return original (don't show empty)
+    return filtered if filtered else hotels
 
 
 def _fetch_live_hotels(city: str, checkin: str = None, checkout: str = None,
@@ -414,6 +523,154 @@ def _build_hotels_for_response(hotels: list, city: str) -> list:
     return result
 
 
+# ── Tool: Internet Search (Tavily API) ──────────────────────────────────────
+
+_tavily_cache: dict = {}  # simple in-memory cache: query -> (timestamp, results)
+_TAVILY_CACHE_TTL = 10 * 60  # 10 minutes
+
+
+def _tavily_search(query: str, max_results: int = 5) -> dict:
+    """Call Tavily Search API for real-time internet search results.
+    Returns {'results': [...], 'answer': '...'} or empty dict on failure."""
+    api_key = getattr(settings, 'TAVILY_API_KEY', '')
+    if not api_key:
+        logger.warning("Tavily API key not configured")
+        return {}
+
+    # Check cache
+    now = datetime.utcnow().timestamp()
+    cache_key = f"{query.lower().strip()}_{max_results}"
+    cached = _tavily_cache.get(cache_key)
+    if cached and (now - cached[0]) < _TAVILY_CACHE_TTL:
+        logger.info(f"Tavily cache hit for: {query[:50]}")
+        return cached[1]
+
+    try:
+        resp = requests.post(
+            'https://api.tavily.com/search',
+            json={
+                'api_key': api_key,
+                'query': query,
+                'search_depth': 'advanced',
+                'max_results': max_results,
+                'include_answer': True,
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            result = {
+                'answer': data.get('answer', ''),
+                'results': [
+                    {
+                        'title': r.get('title', ''),
+                        'url': r.get('url', ''),
+                        'content': r.get('content', '')[:300],
+                    }
+                    for r in data.get('results', [])[:max_results]
+                ],
+            }
+            _tavily_cache[cache_key] = (now, result)
+            # Evict old cache entries
+            stale = [k for k, v in _tavily_cache.items() if (now - v[0]) > _TAVILY_CACHE_TTL]
+            for k in stale:
+                del _tavily_cache[k]
+            logger.info(f"Tavily search returned {len(result['results'])} results for: {query[:50]}")
+            return result
+        else:
+            logger.warning(f"Tavily API error {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        logger.warning(f"Tavily search failed: {e}")
+    return {}
+
+
+def _format_tavily_for_context(search_data: dict) -> str:
+    """Format Tavily search results as context for Gemini."""
+    if not search_data:
+        return ""
+    lines = ["\n--- Internet Search Results ---"]
+    if search_data.get('answer'):
+        lines.append(f"Summary: {search_data['answer']}")
+    for i, r in enumerate(search_data.get('results', [])[:5], 1):
+        lines.append(f"{i}. **{r['title']}**")
+        if r.get('content'):
+            lines.append(f"   {r['content'][:200]}")
+    return "\n".join(lines)
+
+
+def _format_tavily_for_reply(search_data: dict) -> str:
+    """Build a user-friendly reply from Tavily results (fallback when Gemini fails)."""
+    if not search_data:
+        return ""
+    lines = []
+    if search_data.get('answer'):
+        lines.append(search_data['answer'])
+        lines.append("")
+    results = search_data.get('results', [])
+    if results:
+        lines.append("**Sources:**")
+        for i, r in enumerate(results[:5], 1):
+            lines.append(f"{i}. **{r['title']}** — {r.get('content', '')[:150]}")
+    return "\n".join(lines)
+
+
+# ── Tool: Hotel Scraper (formal interface) ──────────────────────────────────
+
+def tool_hotel_scraper(location: str, checkin: str = None, checkout: str = None,
+                       guests: int = 2, price_range: int = None,
+                       room_type: str = None) -> dict:
+    """Formal hotel scraper tool interface.
+    Returns structured JSON with hotel data for the chatbot."""
+    live_hotels, (r_checkin, r_checkout, r_adults) = _fetch_live_hotels(
+        location, checkin=checkin, checkout=checkout, adults=guests,
+    )
+
+    # Apply filters
+    if live_hotels and (price_range or room_type):
+        live_hotels = _apply_chat_filters(live_hotels, max_price=price_range, room_type=room_type)
+
+    structured = _build_hotels_for_response(live_hotels, location) if live_hotels else []
+
+    return {
+        'hotels': structured,
+        'raw_hotels': live_hotels,
+        'count': len(structured),
+        'city': location,
+        'search_params': {
+            'destination': location,
+            'checkIn': r_checkin or '',
+            'checkOut': r_checkout or '',
+            'adults': r_adults,
+        },
+    }
+
+
+# ── Tool: Internet Search (formal interface) ───────────────────────────────
+
+def tool_internet_search(query: str, max_results: int = 5) -> dict:
+    """Formal internet search tool interface using Tavily API.
+    Returns search results with answer and sources."""
+    return _tavily_search(query, max_results=max_results)
+
+
+# ── Tool dispatcher ─────────────────────────────────────────────────────────
+
+AVAILABLE_TOOLS = {
+    'hotel_scraper': {
+        'name': 'Hotel Scraper',
+        'description': 'Search real-time hotel availability and prices from Booking.com',
+        'function': tool_hotel_scraper,
+        'parameters': ['location', 'checkin', 'checkout', 'guests', 'price_range', 'room_type'],
+    },
+    'internet_search': {
+        'name': 'Internet Search',
+        'description': 'Search the internet for travel information, tips, attractions, and general knowledge',
+        'function': tool_internet_search,
+        'parameters': ['query', 'max_results'],
+    },
+}
+
+
 # ── Prompt builders ─────────────────────────────────────────────────────────
 
 def _build_text_processing_prompt(message: str, kind: str) -> tuple:
@@ -449,7 +706,8 @@ def _build_text_processing_prompt(message: str, kind: str) -> tuple:
 
 
 def _build_chat_prompt(message: str, conversation: dict,
-                       detected_emotion=None, emotion_confidence=0.0) -> tuple:
+                       detected_emotion=None, emotion_confidence=0.0,
+                       search_context: str = "") -> tuple:
     """Build Gemini system instruction + multi-turn contents."""
     emotion_hint = ""
     if detected_emotion and emotion_confidence > 0.4:
@@ -490,15 +748,15 @@ ABOUT TRAVELLO:
 - Users can search hotels by destination, dates, guests, and room type. Prices in PKR.
 - Supported cities: Lahore, Karachi, Islamabad, Peshawar, Hunza Valley, Swat Valley, Murree, and more.
 
-YOUR CAPABILITIES:
-1. **Travel Recommendations**: Suggest destinations, hotels, attractions based on preferences.
-2. **Hotel Information**: Provide real hotel details (name, room types, prices, ratings, amenities).
-3. **Booking Assistance**: Guide users through booking — collect check-in, check-out, room type, guests, city.
-4. **Price Guidance**: Quote actual hotel prices in PKR from the knowledge base.
-5. **Destination Expertise**: Share info about Pakistani tourist destinations, cuisine, best seasons, tips.
+YOUR TOOLS & CAPABILITIES:
+1. **Hotel Scraper Tool**: Real-time hotel data from Booking.com — invoked when users ask about hotels.
+2. **Internet Search Tool**: Live web search for travel tips, attractions, city info, and general queries.
+3. **Booking Tool**: Guide users to book hotels directly inside our platform (not external sites).
+4. **Travel Knowledge Base**: Built-in data about Pakistani destinations, cuisine, best seasons, and tips.
 
 RESPONSE GUIDELINES:
 - Be natural, conversational, and concise — like a knowledgeable travel expert friend.
+- When internet search results are provided below, use them to give accurate, up-to-date answers. Cite key facts from the results.
 - When recommending hotels, use a numbered list: Hotel Name, Room Type, Price/night (PKR), Rating, Amenities.
 - Use markdown: **bold** for names, bullet points for 3+ items, numbered lists for hotel recs.
 - Do NOT overuse emojis — at most one per response.
@@ -507,7 +765,8 @@ RESPONSE GUIDELINES:
 {f"EMOTIONAL CONTEXT: {emotion_hint}" if emotion_hint else ""}
 {city_context}
 {db_context}
-{offered_ctx}"""
+{offered_ctx}
+{search_context}"""
 
     # Multi-turn contents from conversation history
     contents = []
@@ -521,21 +780,39 @@ RESPONSE GUIDELINES:
 
 def _build_hotel_search_prompt(message: str, conversation: dict) -> tuple:
     city = _extract_city_from_message(message)
-    city_context = _build_city_knowledge_snippet(city) if city else ""
-    db_context = _build_hotels_db_context()
+    gathering = conversation.get('context', {}).get('hotel_search_gathering', {})
+    gathered_city = city or gathering.get('city')
+    city_context = _build_city_knowledge_snippet(gathered_city) if gathered_city else ""
 
-    system_text = f"""You are the Travello hotel search assistant.
+    # Build a summary of what we know so far
+    known_parts = []
+    if gathered_city:
+        known_parts.append(f"Destination: {gathered_city}")
+    if gathering.get('checkin'):
+        known_parts.append(f"Check-in: {gathering['checkin']}")
+    if gathering.get('checkout'):
+        known_parts.append(f"Check-out: {gathering['checkout']}")
+    if gathering.get('adults') and gathering['adults'] != 2:
+        known_parts.append(f"Guests: {gathering['adults']}")
+    if gathering.get('max_price'):
+        known_parts.append(f"Budget: up to PKR {gathering['max_price']}/night")
+    if gathering.get('room_type'):
+        known_parts.append(f"Room type: {gathering['room_type']}")
+    gathered_summary = "\n".join(known_parts) if known_parts else "None yet"
+
+    system_text = f"""You are the Travello hotel search assistant. You help users find and book real-time hotels scraped from Booking.com.
+
+INFO GATHERED FROM USER SO FAR:
+{gathered_summary}
 
 YOUR TASK:
-1. If the user specified a destination, present a brief summary of the real-time hotel options found.
-2. IMPORTANT: The user will see detailed hotel cards with images, prices, ratings, and booking buttons displayed separately below your message. Do NOT repeat every detail — just give a friendly overview like "I found X great options in [city]" and highlight 2-3 standout picks.
-3. If no city mentioned, ask which destination they want.
-4. If details are missing (dates, guests), ask conversationally.
-5. After your overview, say: "You can tap **Book** on any hotel card, or say **Book option 1** to start booking."
-6. Consider budget if mentioned.
-7. Keep your response concise — the hotel cards do the heavy lifting.
-{city_context}
-{db_context}"""
+1. If a destination city is known AND live hotel data is provided below, give a brief friendly overview like "I found X great options in [city]" and highlight 2-3 standout picks. The user will see detailed hotel cards with images, prices, ratings, and booking buttons displayed separately — do NOT list every hotel.
+2. If NO destination city is mentioned yet, ask the user which city/destination they'd like. Suggest popular options like Lahore, Islamabad, Karachi, Murree, or Hunza Valley.
+3. If the user mentions a city but other details are vague, you may suggest they specify dates or budget, but DO NOT block the search — we will search with defaults.
+4. After showing results, say: "You can tap **Book** on any hotel card, or say **Book option 1** to start booking!"
+5. Keep your response concise — the hotel cards do the heavy lifting.
+6. If the user mentions a budget/price range, acknowledge it.
+{city_context}"""
 
     contents = []
     for msg in conversation.get('messages', [])[-8:]:
@@ -782,66 +1059,218 @@ def get_ai_response(message: str, session_id: str = 'default', user=None) -> dic
         # ── Hotel search ──
         if request_type == 'hotel_search':
             _add_to_history(conv, 'user', message)
-            city = _extract_city_from_message(message)
 
-            # Extract dates & guests from user message for the scraper
+            # Merge gathering context with new info from this message
+            gathering = conv.get('context', {}).get('hotel_search_gathering', {})
+
+            # Extract all filters from the full conversation + current message
+            city = _extract_city_from_message(message) or gathering.get('city')
             msg_checkin, msg_checkout = _extract_dates_from_message(message)
             msg_adults = _extract_adults_from_message(message)
+            msg_max_price = _extract_max_price(message)
+            msg_room_type = _extract_room_type(message)
 
-            if city:
-                live_hotels, (r_checkin, r_checkout, r_adults) = _fetch_live_hotels(
-                    city, checkin=msg_checkin, checkout=msg_checkout, adults=msg_adults,
-                )
-            else:
-                live_hotels, r_checkin, r_checkout, r_adults = [], msg_checkin, msg_checkout, msg_adults
+            # Merge with previously gathered preferences
+            checkin = msg_checkin or gathering.get('checkin')
+            checkout = msg_checkout or gathering.get('checkout')
+            adults = msg_adults if msg_adults != 2 else gathering.get('adults', 2)
+            max_price = msg_max_price or gathering.get('max_price')
+            room_type = msg_room_type or gathering.get('room_type')
 
-            live_context = _format_scraped_hotels_for_context(live_hotels, city or 'Pakistan')
+            # If no city yet, ask the user for it (structured gathering)
+            if not city:
+                # Save what we have so far
+                conv['context']['hotel_search_gathering'] = {
+                    'checkin': checkin, 'checkout': checkout,
+                    'adults': adults, 'max_price': max_price,
+                    'room_type': room_type,
+                }
+                # Try Gemini for a natural follow-up, fall back to canned response
+                try:
+                    system_instruction, contents = _build_hotel_search_prompt(message, conv)
+                    reply = _call_gemini(system_instruction, contents, temperature=0.5, max_tokens=500)
+                except Exception:
+                    reply = (
+                        "I'd love to help you find the perfect hotel! 🏨\n\n"
+                        "Which **city or destination** are you looking for? "
+                        "For example: Lahore, Islamabad, Karachi, Murree, Hunza Valley..."
+                    )
+                _add_to_history(conv, 'bot', reply)
+                return _success(reply, detected_emotion, emotion_confidence)
+
+            # City is known — update gathering with full info, then call Hotel Scraper Tool
+            conv['context']['hotel_search_gathering'] = {
+                'city': city, 'checkin': checkin, 'checkout': checkout,
+                'adults': adults, 'max_price': max_price,
+                'room_type': room_type,
+            }
+
+            # Use the formal Hotel Scraper Tool
+            scraper_result = tool_hotel_scraper(
+                location=city, checkin=checkin, checkout=checkout,
+                guests=adults, price_range=max_price, room_type=room_type,
+            )
+            live_hotels = scraper_result['raw_hotels']
+            structured_hotels = scraper_result['hotels']
+            search_params = scraper_result['search_params']
+
+            live_context = _format_scraped_hotels_for_context(live_hotels, city)
             system_instruction, contents = _build_hotel_search_prompt(message, conv)
             if live_context:
                 system_instruction += live_context
 
-            reply = _call_gemini(system_instruction, contents, temperature=0.5, max_tokens=1500)
+            try:
+                reply = _call_gemini(system_instruction, contents, temperature=0.5, max_tokens=1500)
+            except Exception:
+                # Build a good fallback reply that references the actual hotels
+                if live_hotels:
+                    lines = [f"Here are real-time hotel options in **{city}**:\n"]
+                    for i, h in enumerate(live_hotels[:8], 1):
+                        name = h.get('hotel_name') or h.get('name', 'Hotel')
+                        price = h.get('price_per_night') or h.get('total_stay_price', 'N/A')
+                        rating = h.get('review_score') or h.get('rating', 'N/A')
+                        rm = h.get('room_type', 'Standard Room')
+                        lines.append(f"{i}. **{name}** — Room: {rm}, PKR {price}/night, Rating: {rating}")
+                    lines.append("\nYou can tap **Book** on any hotel card, or say **Book option 1** to start booking!")
+                    reply = "\n".join(lines)
+                else:
+                    reply = f"I searched for hotels in **{city}** but couldn't find results right now. Please try again in a moment."
+
             _store_offered_hotels(conv, city, live_hotels)
             _add_to_history(conv, 'bot', reply)
 
-            # Build structured hotel data for frontend cards
-            structured_hotels = _build_hotels_for_response(live_hotels, city) if live_hotels else []
-
-            # Include search params (with resolved dates) so frontend can navigate to search page
-            search_params = {
-                'destination': city or '',
-                'checkIn': r_checkin or '',
-                'checkOut': r_checkout or '',
-                'adults': r_adults,
-            }
+            # Clear gathering state — search is done
+            conv['context'].pop('hotel_search_gathering', None)
 
             return _success(
                 reply, detected_emotion, emotion_confidence,
                 has_hotels=True,
                 hotels=structured_hotels,
                 search_params=search_params,
+                tools_used=['hotel_scraper'],
             )
 
         # ── Destination query ──
         if request_type == 'destination_query':
             _add_to_history(conv, 'user', message)
-            system_instruction, contents = _build_chat_prompt(
-                message, conv, detected_emotion, emotion_confidence)
-            reply = _call_gemini(system_instruction, contents, max_tokens=1500)
+
+            # Use Internet Search Tool for real-time travel information
+            search_context = ""
+            web_results = None
+            try:
+                web_results = tool_internet_search(message, max_results=5)
+                if web_results:
+                    search_context = _format_tavily_for_context(web_results)
+                    logger.info(f"Chat: enriched destination query with {len(web_results.get('results', []))} web results")
+            except Exception as e:
+                logger.warning(f"Internet search failed for destination query: {e}")
+
+            try:
+                system_instruction, contents = _build_chat_prompt(
+                    message, conv, detected_emotion, emotion_confidence,
+                    search_context=search_context)
+                reply = _call_gemini(system_instruction, contents, max_tokens=1500)
+            except Exception:
+                # Gemini failed — use Tavily results directly as fallback
+                if web_results:
+                    reply = _format_tavily_for_reply(web_results)
+                else:
+                    city = _extract_city_from_message(message)
+                    snippet = _build_city_knowledge_snippet(city) if city else ""
+                    if snippet:
+                        reply = f"Here's what I know about **{city}**:\n{snippet}"
+                    else:
+                        reply = "I couldn't fetch travel information right now. Please try again in a moment."
+
             _add_to_history(conv, 'bot', reply)
-            return _success(reply, detected_emotion, emotion_confidence)
+            return _success(
+                reply, detected_emotion, emotion_confidence,
+                web_search_used=bool(web_results),
+                sources=[r.get('url', '') for r in (web_results or {}).get('results', [])[:3]] if web_results else None,
+            )
 
         # ── General chat ──
+        # Clear any active hotel gathering if user moved on to general chat
+        conv['context'].pop('hotel_search_gathering', None)
         _add_to_history(conv, 'user', message)
-        system_instruction, contents = _build_chat_prompt(
-            message, conv, detected_emotion, emotion_confidence)
-        reply = _call_gemini(system_instruction, contents)
+
+        # Use Internet Search Tool if the message looks like a travel/info question
+        search_context = ""
+        web_results = None
+        if _should_use_internet_search(message):
+            try:
+                web_results = tool_internet_search(message, max_results=5)
+                if web_results:
+                    search_context = _format_tavily_for_context(web_results)
+                    logger.info(f"Chat: enriched general query with web search")
+            except Exception as e:
+                logger.warning(f"Internet search failed for general chat: {e}")
+
+        try:
+            system_instruction, contents = _build_chat_prompt(
+                message, conv, detected_emotion, emotion_confidence,
+                search_context=search_context)
+            reply = _call_gemini(system_instruction, contents)
+        except Exception:
+            # Gemini failed — try Tavily-only fallback for travel questions
+            if web_results:
+                reply = _format_tavily_for_reply(web_results)
+            else:
+                raise  # Re-raise to hit the outer exception handler
+
         _add_to_history(conv, 'bot', reply)
-        return _success(reply, detected_emotion, emotion_confidence)
+        return _success(
+            reply, detected_emotion, emotion_confidence,
+            web_search_used=bool(web_results),
+        )
 
     except Exception as e:
         error_msg = str(e).lower()
         logger.error(f"Gemini API failed: {e}")
+
+        # For hotel_search, build a fallback that still returns structured hotel cards
+        if request_type == 'hotel_search':
+            gathering = conv.get('context', {}).get('hotel_search_gathering', {})
+            city = _extract_city_from_message(message) or gathering.get('city')
+            if city:
+                try:
+                    live_hotels, (r_checkin, r_checkout, r_adults) = _fetch_live_hotels(city)
+                    # Apply filters even in fallback path
+                    msg_max_price = _extract_max_price(message)
+                    msg_room_type = _extract_room_type(message)
+                    if live_hotels and (msg_max_price or msg_room_type):
+                        live_hotels = _apply_chat_filters(live_hotels, max_price=msg_max_price, room_type=msg_room_type)
+
+                    if live_hotels:
+                        lines = [f"Here are real-time hotel options in **{city}**:\n"]
+                        for i, h in enumerate(live_hotels[:8], 1):
+                            name = h.get('hotel_name') or h.get('name', 'Hotel')
+                            price = h.get('price_per_night') or h.get('total_stay_price', 'N/A')
+                            rating = h.get('review_score') or h.get('rating', 'N/A')
+                            room = h.get('room_type', 'Standard Room')
+                            lines.append(f"{i}. **{name}** — Room: {room}, PKR {price}/night, Rating: {rating}")
+                        lines.append("\nSay **Book option 1** (or any number) to start booking!")
+                        fallback_reply = "\n".join(lines)
+
+                        _store_offered_hotels(conv, city, live_hotels)
+                        _add_to_history(conv, 'user', message)
+                        _add_to_history(conv, 'bot', fallback_reply)
+
+                        structured_hotels = _build_hotels_for_response(live_hotels, city)
+                        search_params = {
+                            'destination': city,
+                            'checkIn': r_checkin or '',
+                            'checkOut': r_checkout or '',
+                            'adults': r_adults,
+                        }
+                        return _success(
+                            fallback_reply, detected_emotion, emotion_confidence,
+                            has_hotels=True,
+                            hotels=structured_hotels,
+                            search_params=search_params,
+                        )
+                except Exception as fallback_err:
+                    logger.warning(f"Hotel fallback also failed: {fallback_err}")
 
         # Try to give a helpful local fallback instead of a generic error
         fallback = _get_fallback_response(message, request_type)

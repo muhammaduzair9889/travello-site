@@ -89,14 +89,14 @@ function ChatHotelCard({ hotel, index, onBook, onViewDetails }) {
               onClick={() => onViewDetails(hotel)}
               className="flex-1 text-[10px] font-medium py-1 px-2 rounded bg-primary-600 hover:bg-primary-700 text-white transition-colors"
             >
-              Book
+              Book Now
             </button>
           )}
           <button
             onClick={() => onViewDetails(hotel)}
             className="flex-1 text-[10px] font-medium py-1 px-2 rounded border border-gray-300 dark:border-gray-500 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 text-center transition-colors"
           >
-            Details
+            View Details
           </button>
         </div>
       </div>
@@ -192,7 +192,7 @@ const QUICK_ACTIONS = [
   { label: '🤖 AI Recommend', message: 'I want personalized hotel recommendations based on my preferences' },
   { label: '🗺️ Destinations', message: 'What are the best travel destinations in Pakistan?' },
   { label: '💰 Budget', message: 'Find budget hotels in Islamabad' },
-  { label: '✈️ Tips', message: 'Travel tips for Pakistan' },
+  { label: '🌐 Travel Tips', message: 'What are the top travel tips for visiting Pakistan?' },
   { label: '📅 Book Hotel', message: 'I want to book a hotel' },
 ];
 
@@ -264,6 +264,9 @@ export default function ChatWidget() {
             content: botText,
             hasHotels: data.has_hotels || false,
             bookingId: data.booking_id || null,
+            webSearchUsed: data.web_search_used || false,
+            toolsUsed: data.tools_used || null,
+            sources: data.sources || null,
           },
         ]);
 
@@ -412,9 +415,14 @@ export default function ChatWidget() {
             if (m.role === 'hotels') {
               return (
                 <div key={m.id} className="space-y-2">
-                  <p className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                    Real-time Results
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                      Real-time Results
+                    </p>
+                    <span className="text-[9px] bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded-full font-medium">
+                      Live from Booking.com
+                    </span>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     {m.hotels.map((hotel, i) => (
                       <ChatHotelCard
@@ -461,6 +469,21 @@ export default function ChatWidget() {
                   }`}
                 >
                   {m.role === 'user' ? m.content : <FormattedMessage text={m.content} />}
+                  {/* Tool usage badges */}
+                  {m.role === 'bot' && (m.toolsUsed || m.webSearchUsed) && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {m.toolsUsed?.includes('hotel_scraper') && (
+                        <span className="text-[9px] bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded-full font-medium">
+                          🔍 Live Scraper
+                        </span>
+                      )}
+                      {m.webSearchUsed && (
+                        <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded-full font-medium">
+                          🌐 Web Search
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {/* Booking confirmation badge */}
                   {m.bookingId && (
                     <div className="mt-2 flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium">

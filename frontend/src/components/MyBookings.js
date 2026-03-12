@@ -35,12 +35,18 @@ const MyBookings = () => {
 
     setCancelling(bookingId);
     try {
-      await bookingAPI.cancelBooking(bookingId);
-      // Refresh bookings list
-      await fetchBookings();
+      const res = await bookingAPI.cancelBooking(bookingId);
+      const updated = res.data?.booking;
+      // Immediately update the UI
+      if (updated) {
+        setBookings((prev) => prev.map((b) => (b.id === bookingId ? updated : b)));
+      } else {
+        // Fallback: re-fetch
+        await fetchBookings();
+      }
     } catch (error) {
       console.error('Error cancelling booking:', error);
-      setError(error.response?.data?.error || 'Failed to cancel booking. Please try again.');
+      setError(error.response?.data?.error || error?.data?.error || 'Failed to cancel booking. Please try again.');
     } finally {
       setCancelling(null);
     }
@@ -355,8 +361,8 @@ const MyBookings = () => {
                           </motion.button>
                         )}
 
-                        {/* Cancel Booking Button - Show only for PENDING bookings */}
-                        {booking.status === 'PENDING' && (
+                        {/* Cancel Booking Button - Show for PENDING, PAID, CONFIRMED */}
+                        {['PENDING', 'PAID', 'CONFIRMED'].includes(booking.status) && (
                           <motion.button
                             whileHover={{ scale: 1.05 }}
                             whileTap={{ scale: 0.95 }}

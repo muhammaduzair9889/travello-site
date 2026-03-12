@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AnimatePresence } from 'framer-motion';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -32,6 +32,7 @@ const PaymentPage = lazy(() => import('./components/PaymentPage'));
 const PaymentSuccess = lazy(() => import('./components/PaymentSuccess'));
 const PaymentCancel = lazy(() => import('./components/PaymentCancel'));
 const MyBookings = lazy(() => import('./components/MyBookings'));
+const BookingDetails = lazy(() => import('./components/BookingDetails'));
 const AdminHotels = lazy(() => import('./components/AdminHotels'));
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const AdminBookings = lazy(() => import('./components/AdminBookings'));
@@ -50,6 +51,29 @@ const LoadingSpinner = () => (
     </div>
   </div>
 );
+
+/* ── Route guards ─────────────────────────────────────────────────────────── */
+
+/** Redirects to /login when no valid user token exists. */
+function ProtectedRoute({ children }) {
+  const location = useLocation();
+  const token = localStorage.getItem('access_token');
+  if (!token) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  return children;
+}
+
+/** Redirects to /admin-login when no valid admin token exists. */
+function AdminRoute({ children }) {
+  const location = useLocation();
+  const isAdmin = localStorage.getItem('isAdmin') === 'true';
+  const token = localStorage.getItem('admin_access_token') || localStorage.getItem('access_token');
+  if (!isAdmin || !token) {
+    return <Navigate to="/admin-login" state={{ from: location }} replace />;
+  }
+  return children;
+}
 
 function App() {
   const [showSplash, setShowSplash] = useState(true);
@@ -86,6 +110,7 @@ function App() {
               <Suspense fallback={<LoadingSpinner />}>
                 <ChatWidget />
                 <Routes>
+                  {/* ── Public routes ── */}
                   <Route path="/" element={<Landing />} />
                   <Route path="/login" element={<Login />} />
                   <Route path="/signup" element={<Signup />} />
@@ -94,7 +119,6 @@ function App() {
                   <Route path="/forgot-password" element={<ForgotPassword />} />
                   <Route path="/verify-reset-otp" element={<VerifyResetOtp />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
-                  <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/admin-login" element={<AdminLogin />} />
                   <Route path="/hotels" element={<HotelsList />} />
                   <Route path="/hotels/:id" element={<HotelDetailPage />} />
@@ -102,20 +126,26 @@ function App() {
                   <Route path="/hotels/results" element={<HotelResults />} />
                   <Route path="/hotels/search-results" element={<HotelSearchResults />} />
                   <Route path="/hotel-details" element={<HotelDetailsPage />} />
-                  <Route path="/hotel-booking" element={<HotelBooking />} />
-                  <Route path="/payment" element={<Payment />} />
-                  <Route path="/payment/:bookingId" element={<PaymentPage />} />
+                  <Route path="/reviews" element={<ReviewsPage />} />
                   <Route path="/payment-success" element={<PaymentSuccess />} />
                   <Route path="/payment-cancel" element={<PaymentCancel />} />
-                  <Route path="/my-bookings" element={<MyBookings />} />
-                  <Route path="/admin/hotels" element={<AdminHotels />} />
-                  <Route path="/admin/bookings" element={<AdminBookings />} />
-                  <Route path="/admin-dashboard" element={<AdminDashboard />} />
-                  <Route path="/journal" element={<TravelJournal />} />
-                  <Route path="/itinerary" element={<ItineraryPlanner />} />
-                  <Route path="/reviews" element={<ReviewsPage />} />
-                  <Route path="/my-reviews" element={<MyReviews />} />
-                  <Route path="/write-review" element={<ReviewForm />} />
+
+                  {/* ── User protected routes ── */}
+                  <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                  <Route path="/hotel-booking" element={<ProtectedRoute><HotelBooking /></ProtectedRoute>} />
+                  <Route path="/payment" element={<ProtectedRoute><Payment /></ProtectedRoute>} />
+                  <Route path="/payment/:bookingId" element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
+                  <Route path="/my-bookings" element={<ProtectedRoute><MyBookings /></ProtectedRoute>} />
+                  <Route path="/booking/:id" element={<ProtectedRoute><BookingDetails /></ProtectedRoute>} />
+                  <Route path="/journal" element={<ProtectedRoute><TravelJournal /></ProtectedRoute>} />
+                  <Route path="/itinerary" element={<ProtectedRoute><ItineraryPlanner /></ProtectedRoute>} />
+                  <Route path="/my-reviews" element={<ProtectedRoute><MyReviews /></ProtectedRoute>} />
+                  <Route path="/write-review" element={<ProtectedRoute><ReviewForm /></ProtectedRoute>} />
+
+                  {/* ── Admin protected routes ── */}
+                  <Route path="/admin/hotels" element={<AdminRoute><AdminHotels /></AdminRoute>} />
+                  <Route path="/admin/bookings" element={<AdminRoute><AdminBookings /></AdminRoute>} />
+                  <Route path="/admin-dashboard" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
                 </Routes>
               </Suspense>
             </div>

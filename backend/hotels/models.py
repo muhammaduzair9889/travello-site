@@ -288,6 +288,36 @@ class Booking(models.Model):
     guest_phone = models.CharField(max_length=20, blank=True)
     special_requests = models.TextField(blank=True)
     
+    # Cancellation tracking
+    cancelled_at = models.DateTimeField(blank=True, null=True)
+    cancellation_reason = models.TextField(
+        blank=True,
+        help_text='Reason for cancellation'
+    )
+    cancelled_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True, null=True,
+        related_name='cancelled_bookings',
+        help_text='Staff/user who cancelled the booking'
+    )
+    refund_amount = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        blank=True, null=True,
+        help_text='Amount refunded (if any)'
+    )
+    refund_status = models.CharField(
+        max_length=15,
+        choices=[
+            ('NONE', 'No Refund'),
+            ('PENDING', 'Refund Pending'),
+            ('PROCESSED', 'Refund Processed'),
+            ('FAILED', 'Refund Failed'),
+        ],
+        default='NONE',
+        blank=True,
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

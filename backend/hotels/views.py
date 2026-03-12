@@ -98,8 +98,8 @@ class BookingViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Users can only see their own bookings, admins see all"""
         if self.request.user.is_staff:
-            return Booking.objects.all().select_related('hotel', 'room_type', 'user').order_by('-created_at')
-        return Booking.objects.filter(user=self.request.user).select_related('hotel', 'room_type').order_by('-created_at')
+            return Booking.objects.all().select_related('hotel', 'room_type', 'user').prefetch_related('payment').order_by('-created_at')
+        return Booking.objects.filter(user=self.request.user).select_related('hotel', 'room_type').prefetch_related('payment').order_by('-created_at')
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -173,12 +173,36 @@ class BookingViewSet(viewsets.ModelViewSet):
         Admin only - Update booking status (COMPLETED, CANCELLED, etc.)
         """
         booking = self.get_object()
+        new_status = request.data.get('status', booking.status)
+
         serializer = self.get_serializer(booking, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        
+
+        # Auto-populate cancellation tracking when admin sets status to CANCELLED
+        if new_status == 'CANCELLED' and booking.status == 'CANCELLED':
+            if not booking.cancelled_at:
+                booking.cancelled_at = timezone.now()
+            if not booking.cancelled_by:
+                booking.cancelled_by = request.user
+            if not booking.cancellation_reason:
+                booking.cancellation_reason = request.data.get('cancellation_reason', 'Cancelled by admin')
+            # Set refund tracking for paid bookings
+            if booking.refund_status == 'NONE':
+                try:
+                    payment = booking.payment
+                    if payment and payment.status == 'COMPLETED':
+                        booking.refund_amount = payment.amount
+                        booking.refund_status = 'PENDING'
+                except Exception:
+                    pass
+            booking.save(update_fields=[
+                'cancelled_at', 'cancelled_by', 'cancellation_reason',
+                'refund_amount', 'refund_status',
+            ])
+
         logger.info(f"Booking {booking.id} updated by admin {request.user.username}")
-        
+
         response_serializer = BookingSerializer(booking)
         return Response({
             'success': True,
@@ -216,7 +240,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            bookings = Booking.objects.all().select_related('hotel', 'room_type', 'user').order_by('-created_at')
+            bookings = Booking.objects.all().select_related('hotel', 'room_type', 'user').prefetch_related('payment').order_by('-created_at')
             
             # Apply filters
             status_filter = request.query_params.get('status')
@@ -469,37 +493,47 @@ class BookingViewSet(viewsets.ModelViewSet):
     def cancel(self, request, pk=None):
         """
         POST /api/bookings/{id}/cancel/
-        Cancel a booking (user can cancel own PENDING bookings)
+        Cancel a booking — works for PENDING, PAID, and CONFIRMED bookings.
         """
         booking = self.get_object()
-        
-        # Verify user ownership
+
+        # Only booking owner or staff can cancel
         if booking.user != request.user and not request.user.is_staff:
             return Response(
                 {'error': 'You do not have permission to cancel this booking'},
-                status=status.HTTP_403_FORBIDDEN
+                status=status.HTTP_403_FORBIDDEN,
             )
-        
-        # Only allow cancellation of PENDING bookings
-        if booking.status != 'PENDING':
+
+        # Already cancelled / completed
+        if booking.status in ['CANCELLED', 'COMPLETED']:
             return Response(
-                {'error': f'Cannot cancel booking with status: {booking.status}. Only PENDING bookings can be cancelled.'},
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': f'Cannot cancel a {booking.status.lower()} booking'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
-        # Update status to CANCELLED
+
+        was_paid = booking.status in ['PAID', 'CONFIRMED']
+
         booking.status = 'CANCELLED'
+        booking.cancelled_at = timezone.now()
+        booking.cancelled_by = request.user
+        booking.cancellation_reason = request.data.get('reason', '')
+
+        # If booking was paid, mark refund as pending
+        if was_paid:
+            booking.refund_amount = booking.total_price
+            booking.refund_status = 'PENDING'
+
         booking.save()
-        
-        logger.info(f"Booking {booking.id} cancelled by user {request.user.email}")
-        
+
+        logger.info(f"Booking {booking.id} cancelled by user {request.user.email} (was_paid={was_paid})")
+
         serializer = BookingSerializer(booking)
         return Response({
             'success': True,
             'message': 'Booking cancelled successfully',
-            'booking': serializer.data
+            'booking': serializer.data,
         })
-    
+
     @action(detail=False, methods=['get'])
     def my_bookings(self, request):
         """Get current user's bookings (legacy endpoint)"""
@@ -522,26 +556,66 @@ class BookingViewSet(viewsets.ModelViewSet):
                 status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], url_path='mark-refund')
     @transaction.atomic
-    def cancel(self, request, pk=None):
-        """Cancel a booking if owned by the user and not started yet"""
+    def mark_refund(self, request, pk=None):
+        """
+        POST /api/bookings/{id}/mark-refund/
+        Admin only — mark a cancelled booking's refund as completed and email the user.
+        """
+        if not request.user.is_staff:
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+
         booking = self.get_object()
-        # Only booking owner or staff can cancel
-        if booking.user != request.user and not request.user.is_staff:
-            return Response({'error': 'You do not have permission to cancel this booking'}, status=status.HTTP_403_FORBIDDEN)
-        # Prevent cancel if already cancelled or completed
-        if booking.status in ['CANCELLED', 'COMPLETED']:
-            return Response({'error': f'Cannot cancel a {booking.status.lower()} booking'}, status=status.HTTP_400_BAD_REQUEST)
-        # Optional: prevent cancel on/after check-in date
-        from django.utils import timezone
-        if booking.check_in <= timezone.now().date():
-            return Response({'error': 'Cannot cancel on or after check-in date'}, status=status.HTTP_400_BAD_REQUEST)
-        # Update status
-        booking.status = 'CANCELLED'
+
+        if booking.status != 'CANCELLED':
+            return Response({'error': 'Only cancelled bookings can be refunded'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if booking.refund_status == 'PROCESSED':
+            return Response({'error': 'Refund already processed'}, status=status.HTTP_400_BAD_REQUEST)
+
+        booking.refund_status = 'PROCESSED'
+        booking.refund_amount = booking.refund_amount or booking.total_price
         booking.save()
+
+        # Send refund email to user
+        _send_refund_email(booking)
+
+        logger.info(f"Refund marked complete for booking {booking.id} by admin {request.user.email}")
         serializer = BookingSerializer(booking)
-        return Response({'success': True, 'message': 'Booking cancelled', 'booking': serializer.data})
+        return Response({
+            'success': True,
+            'message': 'Refund marked as completed. Email sent to user.',
+            'booking': serializer.data,
+        })
+
+
+def _send_refund_email(booking):
+    """Send refund confirmation email to the booking user."""
+    try:
+        from django.core.mail import send_mail
+        from django.conf import settings as django_settings
+        user = booking.user
+        amount = booking.refund_amount or booking.total_price
+        send_mail(
+            subject='Refund Processed for Cancelled Booking',
+            message=(
+                f"Hello {user.username},\n\n"
+                f"Your refund has been processed for the cancelled booking.\n\n"
+                f"Booking ID: {booking.booking_reference or booking.id}\n"
+                f"Hotel: {booking.hotel.name}\n"
+                f"Refund Amount: PKR {amount:,.2f}\n\n"
+                f"The refund has been sent to your original payment method.\n\n"
+                f"Thank you.\n"
+                f"— Travello Team"
+            ),
+            from_email=django_settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
+        logger.info(f"Refund email sent to {user.email} for booking {booking.id}")
+    except Exception as e:
+        logger.error(f"Failed to send refund email for booking {booking.id}: {e}")
 
 
 class RealTimeHotelSearchView(APIView):

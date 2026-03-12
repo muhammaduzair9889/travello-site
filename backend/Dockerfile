@@ -1,15 +1,4 @@
-# ─────────────────────────────────────────────────────────
-# Travello Backend – Multi-stage Production Dockerfile
-# Python 3.11 / Django 4.2 / Gunicorn / Puppeteer Scraper
-# ─────────────────────────────────────────────────────────
-# Build:  docker build -t travello-backend .
-# Run:    docker run -p 8000:8000 --env-file .env travello-backend
-# ─────────────────────────────────────────────────────────
-
-
-# ── Stage 1: Python dependency builder ───────────────────
-# Isolated build stage — gcc, headers, and pip cache stay here
-# and never make it into the final image, reducing size by ~300MB.
+# Stage 1: Python dependency builder
 FROM python:3.11-slim AS py-builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -33,8 +22,7 @@ RUN pip install --upgrade pip setuptools wheel && \
     pip install -r requirements.txt
 
 
-# ── Stage 2: Node dependency builder (Puppeteer) ────────
-# Separate stage so Node build artifacts don't bloat the Python image.
+# Stage 2: Node dependency builder (Puppeteer)
 FROM node:20-slim AS scraper-builder
 
 WORKDIR /scraper
@@ -47,7 +35,7 @@ RUN npm ci --omit=dev && \
     npm cache clean --force
 
 
-# ── Stage 3: Production runtime ─────────────────────────
+# Stage 3: Production runtime
 # Minimal image: only runtime libs, no compilers / headers / caches.
 FROM python:3.11-slim AS runtime
 
@@ -64,11 +52,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     WEB_CONCURRENCY=2
 
 # Runtime-only system libraries (no gcc, no -dev packages)
-#   libpq5          → PostgreSQL client lib for psycopg2
-#   nodejs          → Runs puppeteer_scraper.js
-#   Chromium deps   → Headless Chromium for Puppeteer
-#   fonts-liberation→ Prevents blank-text rendering in screenshots
-#   tini            → Proper PID 1 / signal handling in containers
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libpq5 curl tini \
@@ -89,12 +72,12 @@ RUN groupadd -r travello && \
 
 WORKDIR /app
 
-# ── Copy artefacts from builder stages ───────────────────
+# Copy artefacts from builder stages
 COPY --from=py-builder      /opt/venv            /opt/venv
 COPY --from=scraper-builder /scraper/node_modules ./scraper/node_modules
 ENV PATH="/opt/venv/bin:$PATH"
 
-# ── Copy application code ───────────────────────────────
+# Copy application code
 COPY . .
 
 # Make entrypoint executable

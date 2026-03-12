@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { FaFilter, FaSyncAlt, FaCalendarAlt, FaHotel, FaUser, FaMoneyBillWave, FaCheckCircle, FaExclamationTriangle } from 'react-icons/fa';
+import { FaFilter, FaSyncAlt, FaCalendarAlt, FaHotel, FaUser, FaMoneyBillWave, FaCheckCircle, FaExclamationTriangle, FaUndo } from 'react-icons/fa';
 import { bookingAPI, hotelAPI } from '../services/api';
 
 const STATUS_OPTIONS = ['PENDING', 'PAID', 'CONFIRMED', 'COMPLETED', 'CANCELLED'];
@@ -51,6 +51,7 @@ const AdminBookings = () => {
   });
   const [statusUpdates, setStatusUpdates] = useState({});
   const [isFiltering, setIsFiltering] = useState(false);
+  const [refundProcessing, setRefundProcessing] = useState({});
 
   useEffect(() => {
     const isAdmin = localStorage.getItem('isAdmin') === 'true';
@@ -114,6 +115,38 @@ const AdminBookings = () => {
     } catch (err) {
       console.error('Failed to update status', err);
       setError(err.response?.data?.error || err.response?.data?.detail || 'Failed to update booking status.');
+    }
+  };
+
+  const handleMarkRefund = async (bookingId) => {
+    if (!window.confirm('Mark refund as completed? This will send a confirmation email to the user.')) return;
+    setRefundProcessing((prev) => ({ ...prev, [bookingId]: true }));
+    try {
+      const res = await bookingAPI.markRefund(bookingId);
+      const updated = res.data?.booking;
+      if (updated) {
+        setBookings((prev) => prev.map((b) => (b.id === bookingId ? updated : b)));
+      } else {
+        await fetchBookings();
+      }
+    } catch (err) {
+      console.error('Failed to mark refund', err);
+      setError(err.response?.data?.error || 'Failed to process refund.');
+    } finally {
+      setRefundProcessing((prev) => ({ ...prev, [bookingId]: false }));
+    }
+  };
+
+  const handleAdminCancelBooking = async (bookingId) => {
+    const reason = window.prompt('Enter cancellation reason (optional):');
+    if (reason === null) return; // user pressed Cancel in prompt
+    try {
+      const res = await bookingAPI.cancelBooking(bookingId, reason || 'Cancelled by admin');
+      const updated = res.data?.booking || res.data;
+      setBookings((prev) => prev.map((b) => (b.id === bookingId ? updated : b)));
+    } catch (err) {
+      console.error('Failed to cancel booking', err);
+      setError(err.response?.data?.error || 'Failed to cancel booking.');
     }
   };
 
@@ -362,8 +395,67 @@ const AdminBookings = () => {
                       >
                         Update
                       </button>
+                      {['PENDING', 'PAID', 'CONFIRMED'].includes(booking.status) && (
+                        <button
+                          onClick={() => handleAdminCancelBooking(booking.id)}
+                          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center gap-2"
+                        >
+                          <FaExclamationTriangle /> Cancel Booking
+                        </button>
+                      )}
                     </div>
                   </div>
+
+                  {/* Cancellation & Refund Details */}
+                  {booking.status === 'CANCELLED' && (
+                    <div className="lg:col-span-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 space-y-3">
+                      <h4 className="font-semibold text-red-700 dark:text-red-400 flex items-center gap-2"><FaExclamationTriangle /> Cancellation Details</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <p className="text-gray-600 dark:text-gray-400 font-semibold mb-1">User Info</p>
+                          <p className="text-gray-800 dark:text-white">ID: {booking.user}</p>
+                          <p className="text-gray-800 dark:text-white">{booking.user_details?.username || booking.user_details?.name || 'N/A'}</p>
+                          <p className="text-gray-800 dark:text-white">{booking.user_details?.email || booking.guest_email || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-600 dark:text-gray-400 font-semibold mb-1">Booking Info</p>
+                          <p className="text-gray-800 dark:text-white">Booking #{booking.id} {booking.booking_reference ? `(${booking.booking_reference})` : ''}</p>
+                          <p className="text-gray-800 dark:text-white">{booking.hotel_details?.name} — {booking.room_type_details?.type}</p>
+                          <p className="text-gray-800 dark:text-white">{formatDate(booking.check_in)} → {formatDate(booking.check_out)}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-600 dark:text-gray-400 font-semibold mb-1">Payment Info</p>
+                          <p className="text-gray-800 dark:text-white">Method: {booking.payment_method}</p>
+                          <p className="text-gray-800 dark:text-white">Amount: PKR {price}</p>
+                          {booking.payment && <p className="text-gray-800 dark:text-white">Payment Status: {booking.payment.status}</p>}
+                          {booking.payment?.stripe_payment_intent && <p className="text-gray-800 dark:text-white text-xs">PI: {booking.payment.stripe_payment_intent}</p>}
+                        </div>
+                        <div>
+                          <p className="text-gray-600 dark:text-gray-400 font-semibold mb-1">Cancellation Info</p>
+                          <p className="text-gray-800 dark:text-white">Cancelled: {booking.cancelled_at ? new Date(booking.cancelled_at).toLocaleString() : 'N/A'}</p>
+                          {booking.cancellation_reason && <p className="text-gray-800 dark:text-white">Reason: {booking.cancellation_reason}</p>}
+                          {booking.refund_status && booking.refund_status !== 'NONE' && (
+                            <p className="text-gray-800 dark:text-white">Refund: <span className={booking.refund_status === 'PROCESSED' ? 'text-green-600 font-bold' : 'text-yellow-600 font-bold'}>{booking.refund_status}</span>
+                              {booking.refund_amount && ` — PKR ${parseFloat(booking.refund_amount).toLocaleString()}`}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      {/* Mark Refund Completed Button */}
+                      {booking.refund_status === 'PENDING' && (
+                        <button
+                          onClick={() => handleMarkRefund(booking.id)}
+                          disabled={refundProcessing[booking.id]}
+                          className="mt-2 px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold flex items-center gap-2 disabled:opacity-50"
+                        >
+                          <FaUndo /> {refundProcessing[booking.id] ? 'Processing...' : 'Mark Refund Completed'}
+                        </button>
+                      )}
+                      {booking.refund_status === 'PROCESSED' && (
+                        <p className="text-green-600 dark:text-green-400 font-semibold flex items-center gap-2"><FaCheckCircle /> Refund has been processed</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </motion.div>
             );

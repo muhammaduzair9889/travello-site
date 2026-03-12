@@ -1,25 +1,15 @@
-# ─────────────────────────────────────────────────────────
-# Travello Frontend – Multi-stage Production Dockerfile
-# Node 20 (build) → nginx 1.27 (serve)
-# ─────────────────────────────────────────────────────────
-# Build:  docker build -t travello-frontend .
-# Run:    docker run -p 3000:80 travello-frontend
-# ─────────────────────────────────────────────────────────
-
-
-# ── Stage 1: Install dependencies ────────────────────────
-# Separate layer so deps are cached as long as package.json stays the same.
+# Stage 1: Install dependencies
 FROM node:20-alpine AS deps
 
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
 
-# --frozen-lockfile equivalent for npm
+# frozen-lockfile equivalent for npm
 RUN npm ci && npm cache clean --force
 
 
-# ── Stage 2: Build production bundle ────────────────────
+# Stage 2: Build production bundle
 FROM node:20-alpine AS builder
 
 WORKDIR /app
@@ -43,16 +33,14 @@ ENV REACT_APP_API_URL=${REACT_APP_API_URL} \
 RUN npm run build
 
 
-# ── Stage 3: Serve with nginx ───────────────────────────
-# Alpine-based nginx — final image is ~25 MB (no Node.js, no sources).
+# Stage 3: Serve with nginx
 FROM nginx:1.27-alpine AS runtime
 
 LABEL maintainer="Travello Team" \
       description="Travello React SPA served by nginx" \
       org.opencontainers.image.source="https://github.com/travello/travello"
 
-# ── nginx configuration (SPA routing + gzip + security) ─
-# Remove default site and write our own config inline.
+# nginx configuration (SPA routing + gzip + security)
 RUN rm /etc/nginx/conf.d/default.conf && \
     cat > /etc/nginx/conf.d/travello.conf <<'NGINX'
 server {

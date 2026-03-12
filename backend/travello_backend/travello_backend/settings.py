@@ -296,6 +296,9 @@ GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
 # Groq AI Settings (Free & Fast - Llama 3)
 GROQ_API_KEY = config('GROQ_API_KEY', default='')
 
+# Tavily Search API (Internet search for travel queries)
+TAVILY_API_KEY = config('TAVILY_API_KEY', default='')
+
 # RapidAPI removed - using Puppeteer scraper for real-time hotel data
 # RAPIDAPI_KEY is no longer used
 
@@ -354,6 +357,32 @@ OTP_MAX_ATTEMPTS = config('OTP_MAX_ATTEMPTS', default=5, cast=int)
 
 # Email validation
 VALIDATE_EMAIL_ON_SIGNUP = config('VALIDATE_EMAIL_ON_SIGNUP', default=True, cast=bool)
+
+# ============================================
+# CACHE CONFIGURATION
+# Redis for production, LocMemCache for development
+# ============================================
+REDIS_URL = config('REDIS_URL', default='')
+
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+            'TIMEOUT': 15 * 60,  # 15 minutes default
+            'OPTIONS': {
+                'db': '1',
+            },
+        }
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'travello-cache',
+            'TIMEOUT': 15 * 60,
+        }
+    }
 
 # ============================================
 # SCRAPER CONFIGURATION

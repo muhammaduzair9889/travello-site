@@ -96,9 +96,12 @@ const AdminDashboard = () => {
   const handleSignOut = () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
+    localStorage.removeItem('admin_access_token');
+    localStorage.removeItem('admin_refresh_token');
     localStorage.removeItem('user');
+    localStorage.removeItem('admin');
     localStorage.removeItem('isAdmin');
-    navigate('/login');
+    navigate('/admin-login', { replace: true });
   };
 
   /* ── KPI data ── */

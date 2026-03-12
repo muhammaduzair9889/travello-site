@@ -1,27 +1,11 @@
-# ─────────────────────────────────────────────────────────
-# Travello – Docker Compose  (dev / prod / LAN)
-# ─────────────────────────────────────────────────────────
-#
-#  Quick start    :  docker compose up --build
-#  Detached       :  docker compose up -d --build
-#  Logs           :  docker compose logs -f backend
-#  Stop           :  docker compose down
-#  Full reset     :  docker compose down -v   (⚠ deletes volumes)
-#  Migrations     :  Automatic on startup (entrypoint.sh)
-#  Superuser      :  docker compose exec backend python manage.py createsuperuser
-#  Shell          :  docker compose exec backend bash
-#
-#  LAN / Mobile   :  Open http://<your-ip>:3000 on any device
-#                     on the same Wi-Fi (ports already on 0.0.0.0).
-# ─────────────────────────────────────────────────────────
 
 services:
 
-  # ────────────────────────────────────────────────────────
+  
   #  PostgreSQL 16  — primary datastore
-  # ────────────────────────────────────────────────────────
+
   db:
-    image: postgres:16-alpine            # Alpine = ~80 MB vs ~400 MB for full
+    image: postgres:16-alpine
     container_name: travello-db
     restart: unless-stopped
     environment:
@@ -31,23 +15,18 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - backend-net                      # Only backend can reach the DB
+      - backend-net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U travello -d travello_db"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-    # No host port — DB is internal only.
-    # Uncomment for local debugging:
-    # ports:
-    #   - "5432:5432"
-
-  # ────────────────────────────────────────────────────────
+    
   #  Redis 7  — caching layer (scraper results, sessions)
-  # ────────────────────────────────────────────────────────
+  
   redis:
-    image: redis:7-alpine                # Alpine = ~15 MB
+    image: redis:7-alpine
     container_name: travello-redis
     restart: unless-stopped
     command: >
@@ -59,20 +38,15 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      - backend-net                      # Only backend can reach Redis
+      - backend-net
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
-    # No host port — Redis is internal only.
-    # Uncomment for local debugging:
-    # ports:
-    #   - "6379:6379"
 
-  # ────────────────────────────────────────────────────────
   #  Django Backend  — REST API + Puppeteer scraper
-  # ────────────────────────────────────────────────────────
+
   backend:
     build:
       context: ./backend
@@ -80,8 +54,8 @@ services:
     container_name: travello-backend
     restart: unless-stopped
     env_file:
-      - path: ./backend/.env             # Your API keys (Gemini, Stripe, etc.)
-        required: false                   # Won't fail if file doesn't exist yet
+      - path: ./backend/.env
+        required: false
     environment:
       # Docker-internal overrides (take precedence over .env)
       DATABASE_URL:          postgres://travello:${DB_PASSWORD:-travello_secret}@db:5432/travello_db
@@ -90,14 +64,14 @@ services:
       ALLOWED_HOSTS:         localhost,127.0.0.1,backend,0.0.0.0,${EXTRA_HOSTS:-}
       CORS_ALLOW_ALL_ORIGINS: "True"
     volumes:
-      - backend_data:/app/data           # SQLite fallback / dataset persistence
-      - backend_media:/app/media         # User-uploaded images
-      - backend_static:/app/staticfiles  # Collected static files
+      - backend_data:/app/data
+      - backend_media:/app/media
+      - backend_static:/app/staticfiles
     ports:
-      - "8000:8000"                      # Host:Container — accessible on LAN
+      - "8000:8000" 
     networks:
-      - backend-net                      # → DB + Redis
-      - frontend-net                     # ← Frontend reaches backend here
+      - backend-net
+      - frontend-net
     depends_on:
       db:
         condition: service_healthy
@@ -111,9 +85,9 @@ services:
       retries: 5
       start_period: 40s
 
-  # ────────────────────────────────────────────────────────
+  
   #  React Frontend  — production SPA served by nginx
-  # ────────────────────────────────────────────────────────
+  
   frontend:
     build:
       context: ./frontend
@@ -137,9 +111,8 @@ services:
       retries: 3
 
 
-# ──────────────────────────────────────────────────────────
 #  Named Volumes — persistent data across restarts
-# ──────────────────────────────────────────────────────────
+
 volumes:
   postgres_data:
     driver: local
@@ -158,16 +131,8 @@ volumes:
     name: travello-static
 
 
-# ──────────────────────────────────────────────────────────
 #  Docker Networks — service isolation
-# ──────────────────────────────────────────────────────────
-#
-#  backend-net   :   backend ↔ db ↔ redis    (frontend CANNOT reach db)
-#  frontend-net  :   frontend ↔ backend      (public-facing tier)
-#
-#  This is a two-tier network topology:
-#    [ Internet ] → frontend (nginx:80) → backend (gunicorn:8000) → db / redis
-#
+
 networks:
   backend-net:
     driver: bridge

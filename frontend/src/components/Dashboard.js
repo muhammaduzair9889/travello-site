@@ -1260,18 +1260,19 @@ const TopNav = ({ onToggleMobile }) => {
   const [showThankYou, setShowThankYou] = useState(false);
   
   const handleSignOut = () => {
-    // Show thank you modal first
+    // Clear tokens immediately so back button can't reuse them
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('admin_access_token');
+    localStorage.removeItem('admin_refresh_token');
+    localStorage.removeItem('admin');
+    localStorage.removeItem('isAdmin');
+
+    // Show thank you modal, then redirect
     setShowThankYou(true);
-    
-    // After animation, clear tokens and redirect
     setTimeout(() => {
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('refresh_token');
-      localStorage.removeItem('user');
-      localStorage.removeItem('admin_access_token');
-      localStorage.removeItem('admin_refresh_token');
-      localStorage.removeItem('admin');
-      navigate('/login');
+      navigate('/login', { replace: true });
     }, 3000);
   };
 

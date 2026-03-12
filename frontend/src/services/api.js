@@ -251,9 +251,12 @@ export const bookingAPI = {
     return api.post('/bookings/', bookingData);
   },
   updateBookingStatus: (id, status) => api.patch(`/bookings/${id}/`, { status }),
-  cancelBooking: (id) => {
+  cancelBooking: (id, reason = '') => {
     cache.delete('bookings_my');
-    return api.post(`/bookings/${id}/cancel/`);
+    return api.post(`/bookings/${id}/cancel/`, { reason });
+  },
+  markRefund: (id) => {
+    return api.post(`/bookings/${id}/mark-refund/`);
   },
   confirmPayment: (bookingId) => {
     cache.delete('bookings_my');

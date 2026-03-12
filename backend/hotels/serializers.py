@@ -127,18 +127,25 @@ class BookingSerializer(serializers.ModelSerializer):
     number_of_nights = serializers.IntegerField(read_only=True)
     is_active = serializers.BooleanField(read_only=True)
     is_past = serializers.BooleanField(read_only=True)
+    cancelled_by_username = serializers.CharField(source='cancelled_by.username', read_only=True, default=None)
     
     class Meta:
         model = Booking
         fields = [
-            'id', 'user', 'hotel', 'room_type', 'rooms_booked',
-            'check_in', 'check_out', 'total_price', 'payment_method',
+            'id', 'booking_reference', 'user', 'hotel', 'room_type', 'rooms_booked',
+            'check_in', 'check_out', 'total_price', 'base_price', 'tax_amount',
+            'service_charge', 'payment_method',
             'status', 'guest_name', 'guest_email', 'guest_phone',
             'special_requests', 'number_of_nights', 'is_active', 'is_past',
+            'cancelled_at', 'cancelled_by', 'cancelled_by_username',
+            'cancellation_reason', 'refund_amount', 'refund_status',
             'hotel_details', 'room_type_details', 'user_details', 'payment',
-            'created_at', 'updated_at'
+            'invoice_number', 'created_at', 'updated_at'
         ]
-        read_only_fields = ('created_at', 'updated_at', 'user')
+        read_only_fields = (
+            'created_at', 'updated_at', 'user', 'booking_reference',
+            'invoice_number', 'cancelled_at', 'cancelled_by',
+        )
 
 
 class BookingCreateSerializer(serializers.ModelSerializer):
